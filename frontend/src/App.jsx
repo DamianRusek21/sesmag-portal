@@ -1,9 +1,36 @@
 import { useEffect, useState } from 'react';
+import './App.css';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend
+} from 'recharts';
+
+const API = 'http://localhost:5000/api';
 
 function App() {
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [user, setUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [changes, setChanges] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
+  const [chartData, setChartData] = useState(null);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [databaseOverview, setDatabaseOverview] = useState(null);
+  const [message, setMessage] = useState('');
+  const [loginData, setLoginData] = useState({
+    email: '',
+    password: ''
+  });
   const [formData, setFormData] = useState({
     phone: '',
     department: '',
@@ -13,243 +40,719 @@ function App() {
     public_info: '',
     private_info: ''
   });
-  const [message, setMessage] = useState('');
 
-  const loadData = () => {
-    fetch('http://localhost:5000/api/users')
-      .then(res => res.json())
-      .then(data => setUsers(data))
-      .catch(err => console.error(err));
-
-    fetch('http://localhost:5000/api/profiles')
-      .then(res => res.json())
-      .then(data => {
-        setProfiles(data);
-
-        if (data.length > 0) {
-          const first = data[0];
-          setFormData({
-            phone: first.phone || '',
-            department: first.department || '',
-            job_title: first.job_title || '',
-            bio: first.bio || '',
-            location: first.location || '',
-            public_info: first.public_info || '',
-            private_info: first.private_info || ''
-          });
-        }
-      })
-      .catch(err => console.error(err));
-
-    fetch('http://localhost:5000/api/manager/changes')
-      .then(res => res.json())
-      .then(data => setChanges(data))
-      .catch(err => console.error(err));
-  };
+  const authHeaders = token
+    ? {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      }
+    : { 'Content-Type': 'application/json' };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (token) {
+      loadCurrentUser();
+    }
+  }, [token]);
 
-  const handleChange = (e) => {
+  const loadCurrentUser = async () => {
+    try {
+      const res = await fetch(`${API}/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!res.ok) throw new Error('Failed to load user');
+
+      const data = await res.json();
+      setUser(data);
+      loadData(data.role);
+    } catch (err) {
+      console.error(err);
+      handleLogout();
+    }
+  };
+
+  const loadData = async (role) => {
+    try {
+      const profileRes = await fetch(`${API}/profiles/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const profileData = await profileRes.json();
+
+      setFormData({
+        phone: profileData.phone || '',
+        department: profileData.department || '',
+        job_title: profileData.job_title || '',
+        bio: profileData.bio || '',
+        location: profileData.location || '',
+        public_info: profileData.public_info || '',
+        private_info: profileData.private_info || ''
+      });
+
+      if (role === 'manager' || role === 'admin') {
+        const [usersRes, profilesRes, changesRes, dashboardRes, chartRes] = await Promise.all([
+          fetch(`${API}/users`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/profiles`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/manager/changes`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/manager/dashboard`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/manager/chart-data`, { headers: { Authorization: `Bearer ${token}` } })
+        ]);
+
+        setUsers(await usersRes.json());
+        setProfiles(await profilesRes.json());
+        setChanges(await changesRes.json());
+        setDashboard(await dashboardRes.json());
+        setChartData(await chartRes.json());
+      }
+
+      if (role === 'admin') {
+        const [logsRes, dbOverviewRes] = await Promise.all([
+          fetch(`${API}/manager/activity-logs`, {
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          fetch(`${API}/manager/database-overview`, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        ]);
+
+        setActivityLogs(await logsRes.json());
+        setDatabaseOverview(await dbOverviewRes.json());
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleLoginChange = (e) => {
+    setLoginData({
+      ...loginData,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginData)
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setMessage(data.error || 'Login failed');
+        return;
+      }
+
+      localStorage.setItem('token', data.token);
+      setToken(data.token);
+      setMessage('Login successful');
+    } catch (err) {
+      console.error(err);
+      setMessage('Login failed');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken('');
+    setUser(null);
+    setUsers([]);
+    setProfiles([]);
+    setChanges([]);
+    setDashboard(null);
+    setChartData(null);
+    setActivityLogs([]);
+    setDatabaseOverview(null);
+    setMessage('Logged out');
+  };
+
+  const handleProfileChange = (e) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmitChanges = async (e) => {
     e.preventDefault();
 
-    const res = await fetch('http://localhost:5000/api/profiles/1', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData)
-    });
+    try {
+      const res = await fetch(`${API}/profiles/request-change`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(formData)
+      });
 
-    if (res.ok) {
-      setMessage('Profile updated successfully.');
-      loadData();
-    } else {
-      setMessage('Failed to update profile.');
+      const data = await res.json();
+
+      if (!res.ok) {
+        setMessage(data.error || 'Failed to submit changes');
+        return;
+      }
+
+      setMessage(data.message);
+      loadData(user.role);
+    } catch (err) {
+      console.error(err);
+      setMessage('Failed to submit changes');
     }
   };
 
-  return (
-    <div className="container py-4">
-      <h1 className="mb-4">SESMag HR Portal</h1>
+  const reviewChange = async (id, action) => {
+    try {
+      const res = await fetch(`${API}/manager/changes/${id}/${action}`, {
+        method: 'PUT',
+        headers: authHeaders
+      });
 
-      <div className="alert alert-info">
-        This system allows employees to manage their profiles and managers to review updates.
-      </div>
+      const data = await res.json();
 
-      <section className="mb-5">
-        <h2>Users</h2>
+      if (!res.ok) {
+        setMessage(data.error || `Failed to ${action} request`);
+        return;
+      }
 
-        <div className="table-responsive">
-          <table className="table table-bordered table-striped">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Full Name</th>
-                <th>Email</th>
-                <th>Role</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(user => (
-                <tr key={user.id}>
-                  <td>{user.id}</td>
-                  <td>{user.full_name}</td>
-                  <td>{user.email}</td>
-                  <td>{user.role}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      setMessage(data.message);
+      loadData(user.role);
+    } catch (err) {
+      console.error(err);
+      setMessage(`Failed to ${action} request`);
+    }
+  };
 
-      <section className="mb-5">
-        <h2>Edit Employee Profile</h2>
+  const handleRoleChange = async (targetUserId, newRole) => {
+    try {
+      const res = await fetch(`${API}/users/${targetUserId}/role`, {
+        method: 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify({ role: newRole })
+      });
 
-        {message && <div className="alert alert-success">{message}</div>}
+      const data = await res.json();
 
-        <form onSubmit={handleSubmit} className="card p-4">
-          <div className="row">
-            <div className="col-md-6 mb-3">
-              <label className="form-label">Phone</label>
-              <input
-                type="text"
-                className="form-control"
-                name="phone"
-                value={formData.phone}
-                onChange={handleChange}
-              />
-            </div>
+      if (!res.ok) {
+        setMessage(data.error || 'Failed to update role');
+        return;
+      }
 
-            <div className="col-md-6 mb-3">
-              <label className="form-label">Department</label>
-              <input
-                type="text"
-                className="form-control"
-                name="department"
-                value={formData.department}
-                onChange={handleChange}
-              />
-            </div>
+      setMessage(data.message);
+      loadData(user.role);
+    } catch (err) {
+      console.error(err);
+      setMessage('Failed to update role');
+    }
+  };
 
-            <div className="col-md-6 mb-3">
-              <label className="form-label">Job Title</label>
-              <input
-                type="text"
-                className="form-control"
-                name="job_title"
-                value={formData.job_title}
-                onChange={handleChange}
-              />
-            </div>
+  const roleBadgeClass =
+    user?.role === 'admin'
+      ? 'badge-role badge-admin'
+      : user?.role === 'manager'
+      ? 'badge-role badge-manager'
+      : 'badge-role badge-employee';
 
-            <div className="col-md-6 mb-3">
-              <label className="form-label">Location</label>
-              <input
-                type="text"
-                className="form-control"
-                name="location"
-                value={formData.location}
-                onChange={handleChange}
-              />
-            </div>
+  const getStatusBadge = (status) => {
+    if (status === 'approved') return 'badge-status badge-approved';
+    if (status === 'rejected') return 'badge-status badge-rejected';
+    return 'badge-status badge-pending';
+  };
 
-            <div className="col-12 mb-3">
-              <label className="form-label">Bio</label>
-              <textarea
-                className="form-control"
-                name="bio"
-                rows="3"
-                value={formData.bio}
-                onChange={handleChange}
-              ></textarea>
-            </div>
+  const getUserRoleBadgeClass = (role) => {
+    if (role === 'admin') return 'badge-role badge-admin';
+    if (role === 'manager') return 'badge-role badge-manager';
+    return 'badge-role badge-employee';
+  };
 
-            <div className="col-12 mb-3">
-              <label className="form-label">Public Info</label>
-              <textarea
-                className="form-control"
-                name="public_info"
-                rows="2"
-                value={formData.public_info}
-                onChange={handleChange}
-              ></textarea>
-            </div>
+  const pieColors = ['#2563eb', '#16a34a', '#7c3aed', '#f59e0b'];
 
-            <div className="col-12 mb-3">
-              <label className="form-label">Private Info</label>
-              <textarea
-                className="form-control"
-                name="private_info"
-                rows="2"
-                value={formData.private_info}
-                onChange={handleChange}
-              ></textarea>
+  if (!token || !user) {
+    return (
+      <div className="page-shell">
+        <div className="topbar">
+          <div className="container main-container">
+            <h1>SESMag HR Portal</h1>
+            <div className="topbar-subtitle">
+              Secure employee profile management with role-based access
             </div>
           </div>
+        </div>
 
-          <button type="submit" className="btn btn-primary">
-            Save Profile
-          </button>
-        </form>
-      </section>
+        <div className="container main-container py-4">
+          <div className="row justify-content-center">
+            <div className="col-md-7 col-lg-5">
+              <div className="login-card">
+                <h2 className="section-title mb-3">Sign In</h2>
+                <p className="subtle-text mb-4">
+                  Login as an employee, manager, or admin to access your portal.
+                </p>
 
-      <section className="mb-5">
-        <h2>Profiles</h2>
+                {message && <div className="alert alert-info status-alert">{message}</div>}
 
-        <div className="row">
-          {profiles.map(profile => (
-            <div className="col-md-6 mb-3" key={profile.id}>
-              <div className="card p-3 h-100">
-                <h5>{profile.full_name}</h5>
-                <p><strong>Department:</strong> {profile.department}</p>
-                <p><strong>Job Title:</strong> {profile.job_title}</p>
-                <p><strong>Location:</strong> {profile.location}</p>
-                <p><strong>Bio:</strong> {profile.bio}</p>
-                <p><strong>Public Info:</strong> {profile.public_info}</p>
+                <form onSubmit={handleLogin}>
+                  <div className="mb-3">
+                    <label className="form-label">Email</label>
+                    <input
+                      type="email"
+                      className="form-control"
+                      name="email"
+                      value={loginData.email}
+                      onChange={handleLoginChange}
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="form-label">Password</label>
+                    <input
+                      type="password"
+                      className="form-control"
+                      name="password"
+                      value={loginData.password}
+                      onChange={handleLoginChange}
+                      autoComplete="current-password"
+                      required
+                    />
+                  </div>
+
+                  <button type="submit" className="btn btn-primary w-100 py-2">
+                    Login
+                  </button>
+                </form>
+
+                <div className="auth-note">
+                  <div><strong>Employee:</strong> damian@example.com / password123</div>
+                  <div><strong>Manager:</strong> manager@example.com / password123</div>
+                  <div><strong>Admin:</strong> admin@example.com / password123</div>
+                </div>
               </div>
             </div>
-          ))}
+          </div>
         </div>
-      </section>
+      </div>
+    );
+  }
 
-      <section>
-        <h2>Manager Change Requests</h2>
-
-        <div className="table-responsive">
-          <table className="table table-bordered table-striped">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Employee</th>
-                <th>Field</th>
-                <th>Old Value</th>
-                <th>New Value</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {changes.map(change => (
-                <tr key={change.id}>
-                  <td>{change.id}</td>
-                  <td>{change.full_name}</td>
-                  <td>{change.field_name}</td>
-                  <td>{change.old_value}</td>
-                  <td>{change.new_value}</td>
-                  <td>{change.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+  return (
+    <div className="page-shell">
+      <div className="topbar">
+        <div className="container main-container d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div>
+            <h1>SESMag HR Portal</h1>
+            <div className="topbar-subtitle">
+              Logged in as <strong>{user.full_name}</strong>{' '}
+              <span className={roleBadgeClass}>{user.role}</span>
+            </div>
+          </div>
+          <button className="btn btn-outline-light" onClick={handleLogout}>
+            Logout
+          </button>
         </div>
-      </section>
+      </div>
+
+      <div className="container main-container pb-4">
+        {message && <div className="alert alert-info status-alert">{message}</div>}
+
+        {(user.role === 'manager' || user.role === 'admin') && dashboard && (
+          <section className="mb-4">
+            <h2 className="section-title">Dashboard</h2>
+            <div className="row g-3">
+              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Total Users</div><div className="kpi-value">{dashboard.total_users}</div></div></div>
+              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Employees</div><div className="kpi-value">{dashboard.total_employees}</div></div></div>
+              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Managers</div><div className="kpi-value">{dashboard.total_managers}</div></div></div>
+              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Admins</div><div className="kpi-value">{dashboard.total_admins}</div></div></div>
+              <div className="col-md-4"><div className="kpi-card"><div className="kpi-label">Pending Requests</div><div className="kpi-value">{dashboard.pending_requests}</div></div></div>
+              <div className="col-md-4"><div className="kpi-card"><div className="kpi-label">Approved Requests</div><div className="kpi-value">{dashboard.approved_requests}</div></div></div>
+              <div className="col-md-4"><div className="kpi-card"><div className="kpi-label">Rejected Requests</div><div className="kpi-value">{dashboard.rejected_requests}</div></div></div>
+            </div>
+          </section>
+        )}
+
+        {(user.role === 'manager' || user.role === 'admin') && chartData && (
+          <section className="mb-4">
+            <h2 className="section-title">Analytics</h2>
+            <div className="row g-3">
+              <div className="col-lg-6">
+                <div className="section-card">
+                  <h5 className="mb-3">Users by Department</h5>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={chartData.users_by_department}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="department" />
+                        <YAxis allowDecimals={false} />
+                        <Tooltip />
+                        <Bar dataKey="count" fill="#2563eb" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="col-lg-6">
+                <div className="section-card">
+                  <h5 className="mb-3">Role Distribution</h5>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <PieChart>
+                        <Pie
+                          data={chartData.role_distribution}
+                          dataKey="count"
+                          nameKey="role"
+                          outerRadius={90}
+                          label
+                        >
+                          {chartData.role_distribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={pieColors[index % pieColors.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="col-lg-12">
+                <div className="section-card">
+                  <h5 className="mb-3">Request Status Distribution</h5>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={chartData.request_status_distribution}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="status" />
+                        <YAxis allowDecimals={false} />
+                        <Tooltip />
+                        <Bar dataKey="count" fill="#16a34a" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {user.role === 'admin' && databaseOverview && (
+          <section className="mb-4">
+            <h2 className="section-title">Database Overview</h2>
+            <div className="row g-3 mb-3">
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Total Users</div>
+                  <div className="kpi-value">{databaseOverview.totals.users}</div>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Total Profiles</div>
+                  <div className="kpi-value">{databaseOverview.totals.profiles}</div>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Change Requests</div>
+                  <div className="kpi-value">{databaseOverview.totals.change_requests}</div>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Activity Logs</div>
+                  <div className="kpi-value">{databaseOverview.totals.activity_logs}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="row g-3">
+              <div className="col-lg-6">
+                <div className="table-wrap">
+                  <div className="p-3 border-bottom">
+                    <h5 className="mb-0">Recent Change Requests</h5>
+                  </div>
+                  <div className="table-responsive">
+                    <table className="table table-hover mb-0">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>User</th>
+                          <th>Field</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {databaseOverview.recent_change_requests.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.id}</td>
+                            <td>{item.full_name}</td>
+                            <td>{item.field_name}</td>
+                            <td>
+                              <span className={getStatusBadge(item.status)}>
+                                {item.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="col-lg-6">
+                <div className="table-wrap">
+                  <div className="p-3 border-bottom">
+                    <h5 className="mb-0">Recent Database Activity</h5>
+                  </div>
+                  <div className="table-responsive">
+                    <table className="table table-hover mb-0">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>User</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {databaseOverview.recent_activity_logs.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.id}</td>
+                            <td>{item.full_name || 'System'}</td>
+                            <td>{item.action_type}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section className="section-card">
+          <h2 className="section-title">{user.role === 'employee' ? 'My Profile' : 'Account Profile'}</h2>
+
+          <form onSubmit={handleSubmitChanges}>
+            <div className="row">
+              <div className="col-md-6 mb-3">
+                <label className="form-label">Phone</label>
+                <input type="text" className="form-control" name="phone" value={formData.phone} onChange={handleProfileChange} />
+              </div>
+
+              <div className="col-md-6 mb-3">
+                <label className="form-label">Department</label>
+                <input type="text" className="form-control" name="department" value={formData.department} onChange={handleProfileChange} />
+              </div>
+
+              <div className="col-md-6 mb-3">
+                <label className="form-label">Job Title</label>
+                <input type="text" className="form-control" name="job_title" value={formData.job_title} onChange={handleProfileChange} />
+              </div>
+
+              <div className="col-md-6 mb-3">
+                <label className="form-label">Location</label>
+                <input type="text" className="form-control" name="location" value={formData.location} onChange={handleProfileChange} />
+              </div>
+
+              <div className="col-12 mb-3">
+                <label className="form-label">Bio</label>
+                <textarea className="form-control" name="bio" value={formData.bio} onChange={handleProfileChange} />
+              </div>
+
+              <div className="col-12 mb-3">
+                <label className="form-label">Public Info</label>
+                <textarea className="form-control" name="public_info" value={formData.public_info} onChange={handleProfileChange} />
+              </div>
+
+              <div className="col-12 mb-4">
+                <label className="form-label">Private Info</label>
+                <textarea className="form-control" name="private_info" value={formData.private_info} onChange={handleProfileChange} />
+              </div>
+            </div>
+
+            <button type="submit" className="btn btn-primary px-4 py-2">
+              Submit Change Request
+            </button>
+          </form>
+        </section>
+
+        {(user.role === 'manager' || user.role === 'admin') && (
+          <>
+            <section className="mb-4">
+              <h2 className="section-title">Users</h2>
+              <div className="table-wrap">
+                <div className="table-responsive">
+                  <table className="table table-hover mb-0">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Full Name</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        {user.role === 'admin' && <th>Admin Controls</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u) => (
+                        <tr key={u.id}>
+                          <td>{u.id}</td>
+                          <td>{u.full_name}</td>
+                          <td>{u.email}</td>
+                          <td>
+                            <span className={getUserRoleBadgeClass(u.role)}>
+                              {u.role}
+                            </span>
+                          </td>
+                          {user.role === 'admin' && (
+                            <td>
+                              {u.role === 'admin' ? (
+                                <span className="subtle-text">Locked</span>
+                              ) : (
+                                <div className="d-flex gap-2 flex-wrap">
+                                  {u.role !== 'manager' && (
+                                    <button
+                                      className="btn btn-sm btn-success"
+                                      onClick={() => handleRoleChange(u.id, 'manager')}
+                                    >
+                                      Promote to Manager
+                                    </button>
+                                  )}
+                                  {u.role !== 'employee' && (
+                                    <button
+                                      className="btn btn-sm btn-outline-secondary"
+                                      onClick={() => handleRoleChange(u.id, 'employee')}
+                                    >
+                                      Set as Employee
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section className="mb-4">
+              <h2 className="section-title">Profiles</h2>
+              <div className="row g-3">
+                {profiles.map((profile) => (
+                  <div className="col-md-6" key={profile.id}>
+                    <div className="profile-panel">
+                      <h5>{profile.full_name}</h5>
+                      <p><strong>Department:</strong> {profile.department}</p>
+                      <p><strong>Job Title:</strong> {profile.job_title}</p>
+                      <p><strong>Location:</strong> {profile.location}</p>
+                      <p><strong>Bio:</strong> {profile.bio}</p>
+                      <p><strong>Public Info:</strong> {profile.public_info}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="mb-4">
+              <h2 className="section-title">Change Requests</h2>
+              <div className="table-wrap">
+                <div className="table-responsive">
+                  <table className="table table-hover mb-0">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Employee</th>
+                        <th>Field</th>
+                        <th>Old Value</th>
+                        <th>New Value</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {changes.map((change) => (
+                        <tr key={change.id}>
+                          <td>{change.id}</td>
+                          <td>{change.full_name}</td>
+                          <td>{change.field_name}</td>
+                          <td>{change.old_value}</td>
+                          <td>{change.new_value}</td>
+                          <td>
+                            <span className={getStatusBadge(change.status)}>
+                              {change.status}
+                            </span>
+                          </td>
+                          <td>
+                            {change.status === 'pending' ? (
+                              <>
+                                <button
+                                  className="btn btn-success btn-sm me-2"
+                                  onClick={() => reviewChange(change.id, 'approve')}
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => reviewChange(change.id, 'reject')}
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            ) : (
+                              <span className="subtle-text">Reviewed</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+
+        {user.role === 'admin' && (
+          <section className="mb-4">
+            <h2 className="section-title">Activity Logs</h2>
+            <div className="table-wrap">
+              <div className="table-responsive">
+                <table className="table table-hover mb-0">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>User</th>
+                      <th>Role</th>
+                      <th>Action</th>
+                      <th>Description</th>
+                      <th>Created At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activityLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>{log.id}</td>
+                        <td>{log.full_name || 'System'}</td>
+                        <td>{log.role || '-'}</td>
+                        <td>{log.action_type}</td>
+                        <td>{log.description}</td>
+                        <td>{new Date(log.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }

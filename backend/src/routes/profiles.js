@@ -1,32 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/db');
+const { authenticateToken, authorizeRoles } = require('../middleware/auth');
+const logActivity = require('../utils/logActivity');
 
-// GET all profiles with user info
-router.get('/', async (req, res) => {
+router.get('/me', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT profiles.*, users.full_name
-      FROM profiles
-      JOIN users ON profiles.user_id = users.id
-      ORDER BY profiles.id
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch profiles' });
-  }
-});
-
-// GET one profile by user_id
-router.get('/:userId', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT profiles.*, users.full_name
+    const result = await pool.query(
+      `
+      SELECT profiles.*, users.full_name, users.email, users.role
       FROM profiles
       JOIN users ON profiles.user_id = users.id
       WHERE profiles.user_id = $1
-    `, [req.params.userId]);
+      `,
+      [req.user.id]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Profile not found' });
@@ -39,50 +27,84 @@ router.get('/:userId', async (req, res) => {
   }
 });
 
-// UPDATE one profile by user_id
-router.put('/:userId', async (req, res) => {
+router.get('/', authenticateToken, authorizeRoles('manager', 'admin'), async (req, res) => {
   try {
-    const {
-      phone,
-      department,
-      job_title,
-      bio,
-      location,
-      public_info,
-      private_info
-    } = req.body;
+    const result = await pool.query(
+      `
+      SELECT profiles.*, users.full_name, users.email, users.role
+      FROM profiles
+      JOIN users ON profiles.user_id = users.id
+      ORDER BY profiles.id
+      `
+    );
 
-    const result = await pool.query(`
-      UPDATE profiles
-      SET phone = $1,
-          department = $2,
-          job_title = $3,
-          bio = $4,
-          location = $5,
-          public_info = $6,
-          private_info = $7,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = $8
-      RETURNING *
-    `, [
-      phone,
-      department,
-      job_title,
-      bio,
-      location,
-      public_info,
-      private_info,
-      req.params.userId
-    ]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch profiles' });
+  }
+});
 
-    if (result.rows.length === 0) {
+router.post('/request-change', authenticateToken, async (req, res) => {
+  try {
+    const allowedFields = [
+      'phone',
+      'department',
+      'job_title',
+      'bio',
+      'location',
+      'public_info',
+      'private_info'
+    ];
+
+    const profileResult = await pool.query(
+      'SELECT * FROM profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (profileResult.rows.length === 0) {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
-    res.json(result.rows[0]);
+    const currentProfile = profileResult.rows[0];
+    const submittedFields = req.body;
+    let insertedCount = 0;
+
+    for (const field of allowedFields) {
+      if (
+        Object.prototype.hasOwnProperty.call(submittedFields, field) &&
+        submittedFields[field] !== currentProfile[field]
+      ) {
+        await pool.query(
+          `
+          INSERT INTO change_requests (user_id, field_name, old_value, new_value)
+          VALUES ($1, $2, $3, $4)
+          `,
+          [
+            req.user.id,
+            field,
+            currentProfile[field] || '',
+            submittedFields[field] || ''
+          ]
+        );
+        insertedCount += 1;
+      }
+    }
+
+    if (insertedCount === 0) {
+      return res.json({ message: 'No changes were submitted because no fields were different.' });
+    }
+
+    await logActivity(
+      req.user.id,
+      'submit_change_request',
+      `${req.user.full_name} submitted ${insertedCount} change request(s)`
+    );
+
+    res.json({ message: 'Change request(s) submitted successfully' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to update profile' });
+    res.status(500).json({ error: 'Failed to submit change requests' });
   }
 });
 
