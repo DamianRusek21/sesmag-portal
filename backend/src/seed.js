@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const bcrypt = require('bcryptjs');
 const pool = require('./db/db');
 
