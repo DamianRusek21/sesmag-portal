@@ -8,12 +8,27 @@ router.use(authenticateToken, authorizeRoles('manager', 'admin'));
 
 router.get('/changes', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT change_requests.*, users.full_name
-      FROM change_requests
-      JOIN users ON change_requests.user_id = users.id
-      ORDER BY change_requests.requested_at DESC
-    `);
+    let result;
+
+    if (req.user.role === 'manager') {
+      // Managers only review employee requests, not manager/admin requests
+      result = await pool.query(`
+        SELECT change_requests.*, users.full_name, users.role AS requester_role
+        FROM change_requests
+        JOIN users ON change_requests.user_id = users.id
+        WHERE users.role = 'employee'
+        ORDER BY change_requests.requested_at DESC
+      `);
+    } else {
+      // Admin can see all requests
+      result = await pool.query(`
+        SELECT change_requests.*, users.full_name, users.role AS requester_role
+        FROM change_requests
+        JOIN users ON change_requests.user_id = users.id
+        ORDER BY change_requests.requested_at DESC
+      `);
+    }
+
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -24,7 +39,12 @@ router.get('/changes', async (req, res) => {
 router.put('/changes/:id/approve', async (req, res) => {
   try {
     const changeResult = await pool.query(
-      'SELECT * FROM change_requests WHERE id = $1',
+      `
+      SELECT change_requests.*, users.full_name, users.role AS requester_role
+      FROM change_requests
+      JOIN users ON change_requests.user_id = users.id
+      WHERE change_requests.id = $1
+      `,
       [req.params.id]
     );
 
@@ -36,6 +56,14 @@ router.put('/changes/:id/approve', async (req, res) => {
 
     if (change.status !== 'pending') {
       return res.status(400).json({ error: 'Change request already reviewed' });
+    }
+
+    if (change.user_id === req.user.id) {
+      return res.status(403).json({ error: 'Managers cannot approve their own requests' });
+    }
+
+    if (req.user.role === 'manager' && change.requester_role !== 'employee') {
+      return res.status(403).json({ error: 'Managers can only review employee requests' });
     }
 
     const allowedFields = [
@@ -93,6 +121,34 @@ router.put('/changes/:id/approve', async (req, res) => {
 
 router.put('/changes/:id/reject', async (req, res) => {
   try {
+    const requestInfo = await pool.query(
+      `
+      SELECT change_requests.*, users.full_name, users.role AS requester_role
+      FROM change_requests
+      JOIN users ON change_requests.user_id = users.id
+      WHERE change_requests.id = $1
+      `,
+      [req.params.id]
+    );
+
+    if (requestInfo.rows.length === 0) {
+      return res.status(404).json({ error: 'Pending change request not found' });
+    }
+
+    const change = requestInfo.rows[0];
+
+    if (change.status !== 'pending') {
+      return res.status(400).json({ error: 'Change request already reviewed' });
+    }
+
+    if (change.user_id === req.user.id) {
+      return res.status(403).json({ error: 'Managers cannot reject their own requests' });
+    }
+
+    if (req.user.role === 'manager' && change.requester_role !== 'employee') {
+      return res.status(403).json({ error: 'Managers can only review employee requests' });
+    }
+
     const result = await pool.query(
       `UPDATE change_requests
        SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
@@ -100,10 +156,6 @@ router.put('/changes/:id/reject', async (req, res) => {
        RETURNING *`,
       [req.user.id, req.params.id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Pending change request not found' });
-    }
 
     await logActivity(
       req.user.id,
@@ -197,7 +249,6 @@ router.get('/activity-logs', async (req, res) => {
   }
 });
 
-// NEW: Admin-only database overview
 router.get('/database-overview', async (req, res) => {
   try {
     if (req.user.role !== 'admin') {

@@ -196,6 +196,12 @@ textarea.form-control {
   color: #b91c1c;
 }
 
+.role-description {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.95rem;
+  max-width: 700px;
+}
+
 .badge-admin {
   background: #ede9fe;
   color: #6d28d9;

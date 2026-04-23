@@ -7,6 +7,7 @@ const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const profilesRouter = require('./routes/profiles');
 const managerRouter = require('./routes/manager');
+const aiRouter = require('./routes/ai');
 
 const app = express();
 
@@ -22,5 +23,6 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/profiles', profilesRouter);
 app.use('/api/manager', managerRouter);
+app.use('/api/ai', aiRouter);
 
 module.exports = app;

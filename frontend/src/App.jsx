@@ -22,11 +22,13 @@ function App() {
   const [users, setUsers] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [changes, setChanges] = useState([]);
+  const [myRequests, setMyRequests] = useState([]);
   const [dashboard, setDashboard] = useState(null);
   const [chartData, setChartData] = useState(null);
   const [activityLogs, setActivityLogs] = useState([]);
   const [databaseOverview, setDatabaseOverview] = useState(null);
   const [message, setMessage] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
   const [loginData, setLoginData] = useState({
     email: '',
     password: ''
@@ -75,10 +77,17 @@ function App() {
 
   const loadData = async (role) => {
     try {
-      const profileRes = await fetch(`${API}/profiles/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const [profileRes, myRequestsRes] = await Promise.all([
+        fetch(`${API}/profiles/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch(`${API}/profiles/my-requests`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
       const profileData = await profileRes.json();
+      const myRequestsData = await myRequestsRes.json();
 
       setFormData({
         phone: profileData.phone || '',
@@ -89,6 +98,8 @@ function App() {
         public_info: profileData.public_info || '',
         private_info: profileData.private_info || ''
       });
+
+      setMyRequests(myRequestsData);
 
       if (role === 'manager' || role === 'admin') {
         const [usersRes, profilesRes, changesRes, dashboardRes, chartRes] = await Promise.all([
@@ -164,6 +175,7 @@ function App() {
     setUsers([]);
     setProfiles([]);
     setChanges([]);
+    setMyRequests([]);
     setDashboard(null);
     setChartData(null);
     setActivityLogs([]);
@@ -200,6 +212,37 @@ function App() {
     } catch (err) {
       console.error(err);
       setMessage('Failed to submit changes');
+    }
+  };
+
+  const improveBioWithAI = async () => {
+    try {
+      setAiLoading(true);
+
+      const res = await fetch(`${API}/ai/improve-bio`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ bio: formData.bio })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setMessage(data.error || 'AI failed');
+        return;
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        bio: data.improved
+      }));
+
+      setMessage('Bio improved with AI');
+    } catch (err) {
+      console.error(err);
+      setMessage('AI failed');
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -268,6 +311,13 @@ function App() {
   };
 
   const pieColors = ['#2563eb', '#16a34a', '#7c3aed', '#f59e0b'];
+
+  const roleDescription =
+    user?.role === 'employee'
+      ? 'Focused view for managing your own profile and tracking your submitted requests.'
+      : user?.role === 'manager'
+      ? 'Oversight view for reviewing employee requests and monitoring operational activity.'
+      : 'Full system oversight including role management, logs, analytics, and database visibility.';
 
   if (!token || !user) {
     return (
@@ -347,6 +397,7 @@ function App() {
               Logged in as <strong>{user.full_name}</strong>{' '}
               <span className={roleBadgeClass}>{user.role}</span>
             </div>
+            <div className="role-description mt-2">{roleDescription}</div>
           </div>
           <button className="btn btn-outline-light" onClick={handleLogout}>
             Logout
@@ -564,6 +615,19 @@ function App() {
                 <textarea className="form-control" name="bio" value={formData.bio} onChange={handleProfileChange} />
               </div>
 
+              {user.role === 'employee' && (
+                <div className="col-12 mb-3">
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary"
+                    onClick={improveBioWithAI}
+                    disabled={aiLoading}
+                  >
+                    {aiLoading ? 'Improving Bio...' : 'Improve Bio with AI'}
+                  </button>
+                </div>
+              )}
+
               <div className="col-12 mb-3">
                 <label className="form-label">Public Info</label>
                 <textarea className="form-control" name="public_info" value={formData.public_info} onChange={handleProfileChange} />
@@ -579,6 +643,50 @@ function App() {
               Submit Change Request
             </button>
           </form>
+        </section>
+
+        <section className="mb-4">
+          <h2 className="section-title">My Request History</h2>
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Field</th>
+                    <th>Old Value</th>
+                    <th>New Value</th>
+                    <th>Status</th>
+                    <th>Reviewed By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myRequests.length > 0 ? (
+                    myRequests.map((request) => (
+                      <tr key={request.id}>
+                        <td>{request.id}</td>
+                        <td>{request.field_name}</td>
+                        <td>{request.old_value}</td>
+                        <td>{request.new_value}</td>
+                        <td>
+                          <span className={getStatusBadge(request.status)}>
+                            {request.status}
+                          </span>
+                        </td>
+                        <td>{request.reviewer_name || '-'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" className="text-center subtle-text py-4">
+                        No requests submitted yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </section>
 
         {(user.role === 'manager' || user.role === 'admin') && (
@@ -661,7 +769,9 @@ function App() {
             </section>
 
             <section className="mb-4">
-              <h2 className="section-title">Change Requests</h2>
+              <h2 className="section-title">
+                {user.role === 'manager' ? 'Employee Change Requests' : 'Change Requests'}
+              </h2>
               <div className="table-wrap">
                 <div className="table-responsive">
                   <table className="table table-hover mb-0">
@@ -669,6 +779,7 @@ function App() {
                       <tr>
                         <th>ID</th>
                         <th>Employee</th>
+                        <th>Role</th>
                         <th>Field</th>
                         <th>Old Value</th>
                         <th>New Value</th>
@@ -681,6 +792,11 @@ function App() {
                         <tr key={change.id}>
                           <td>{change.id}</td>
                           <td>{change.full_name}</td>
+                          <td>
+                            <span className={getUserRoleBadgeClass(change.requester_role)}>
+                              {change.requester_role}
+                            </span>
+                          </td>
                           <td>{change.field_name}</td>
                           <td>{change.old_value}</td>
                           <td>{change.new_value}</td>

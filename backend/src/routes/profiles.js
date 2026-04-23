@@ -45,6 +45,27 @@ router.get('/', authenticateToken, authorizeRoles('manager', 'admin'), async (re
   }
 });
 
+// Employee/admin/manager can view their own submitted requests
+router.get('/my-requests', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT change_requests.*, reviewer.full_name AS reviewer_name
+      FROM change_requests
+      LEFT JOIN users AS reviewer ON change_requests.reviewed_by = reviewer.id
+      WHERE change_requests.user_id = $1
+      ORDER BY change_requests.requested_at DESC
+      `,
+      [req.user.id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch request history' });
+  }
+});
+
 router.post('/request-change', authenticateToken, async (req, res) => {
   try {
     const allowedFields = [
