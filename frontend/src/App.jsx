@@ -29,10 +29,13 @@ function App() {
   const [databaseOverview, setDatabaseOverview] = useState(null);
   const [message, setMessage] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [guidedMode, setGuidedMode] = useState(true);
+
   const [loginData, setLoginData] = useState({
     email: '',
     password: ''
   });
+
   const [formData, setFormData] = useState({
     phone: '',
     department: '',
@@ -64,14 +67,19 @@ function App() {
         }
       });
 
-      if (!res.ok) throw new Error('Failed to load user');
+      if (!res.ok) {
+        throw new Error('Failed to load user');
+      }
 
       const data = await res.json();
       setUser(data);
-      loadData(data.role);
+      await loadData(data.role);
     } catch (err) {
       console.error(err);
-      handleLogout();
+      localStorage.removeItem('token');
+      setToken('');
+      setUser(null);
+      setMessage('Session expired. Please log in again.');
     }
   };
 
@@ -99,7 +107,7 @@ function App() {
         private_info: profileData.private_info || ''
       });
 
-      setMyRequests(myRequestsData);
+      setMyRequests(Array.isArray(myRequestsData) ? myRequestsData : []);
 
       if (role === 'manager' || role === 'admin') {
         const [usersRes, profilesRes, changesRes, dashboardRes, chartRes] = await Promise.all([
@@ -194,8 +202,16 @@ function App() {
     e.preventDefault();
 
     try {
-      const res = await fetch(`${API}/profiles/request-change`, {
-        method: 'POST',
+      let endpoint = `${API}/profiles/request-change`;
+      let method = 'POST';
+
+      if (user.role === 'admin') {
+        endpoint = `${API}/profiles/me/direct-update`;
+        method = 'PUT';
+      }
+
+      const res = await fetch(endpoint, {
+        method,
         headers: authHeaders,
         body: JSON.stringify(formData)
       });
@@ -203,15 +219,15 @@ function App() {
       const data = await res.json();
 
       if (!res.ok) {
-        setMessage(data.error || 'Failed to submit changes');
+        setMessage(data.error || 'Failed to save changes');
         return;
       }
 
       setMessage(data.message);
-      loadData(user.role);
+      await loadData(user.role);
     } catch (err) {
       console.error(err);
-      setMessage('Failed to submit changes');
+      setMessage('Failed to save changes');
     }
   };
 
@@ -261,7 +277,7 @@ function App() {
       }
 
       setMessage(data.message);
-      loadData(user.role);
+      await loadData(user.role);
     } catch (err) {
       console.error(err);
       setMessage(`Failed to ${action} request`);
@@ -284,7 +300,7 @@ function App() {
       }
 
       setMessage(data.message);
-      loadData(user.role);
+      await loadData(user.role);
     } catch (err) {
       console.error(err);
       setMessage('Failed to update role');
@@ -314,10 +330,10 @@ function App() {
 
   const roleDescription =
     user?.role === 'employee'
-      ? 'Focused view for managing your own profile and tracking your submitted requests.'
+      ? 'Employee view: simple profile editing, AI support, and request tracking.'
       : user?.role === 'manager'
-      ? 'Oversight view for reviewing employee requests and monitoring operational activity.'
-      : 'Full system oversight including role management, logs, analytics, and database visibility.';
+      ? 'Manager view: review employee requests only, with no self-approval allowed.'
+      : 'Admin view: direct profile updates, role control, logs, database overview, and full system visibility.';
 
   if (!token || !user) {
     return (
@@ -326,7 +342,7 @@ function App() {
           <div className="container main-container">
             <h1>SESMag HR Portal</h1>
             <div className="topbar-subtitle">
-              Secure employee profile management with role-based access
+              Role-based profile system designed for different user needs and responsibilities
             </div>
           </div>
         </div>
@@ -337,7 +353,7 @@ function App() {
               <div className="login-card">
                 <h2 className="section-title mb-3">Sign In</h2>
                 <p className="subtle-text mb-4">
-                  Login as an employee, manager, or admin to access your portal.
+                  Login as an employee, manager, or admin.
                 </p>
 
                 {message && <div className="alert alert-info status-alert">{message}</div>}
@@ -399,6 +415,7 @@ function App() {
             </div>
             <div className="role-description mt-2">{roleDescription}</div>
           </div>
+
           <button className="btn btn-outline-light" onClick={handleLogout}>
             Logout
           </button>
@@ -408,17 +425,105 @@ function App() {
       <div className="container main-container pb-4">
         {message && <div className="alert alert-info status-alert">{message}</div>}
 
+        <section className="section-card sesmag-panel">
+          <h2 className="section-title">SESMag Role Support</h2>
+          <p>
+            This system changes the experience based on the user’s role and level of responsibility.
+            Employees get a guided workflow, managers get review tools, and admins get full system oversight.
+          </p>
+
+          {user.role === 'employee' && (
+            <button
+              type="button"
+              className="btn btn-outline-primary guided-toggle"
+              onClick={() => setGuidedMode(!guidedMode)}
+            >
+              Guided Mode: {guidedMode ? 'On' : 'Off'}
+            </button>
+          )}
+
+          <div className="row g-3 mt-2">
+            <div className="col-md-4">
+              <div className={`role-box ${user.role === 'employee' ? 'role-box-active' : ''}`}>
+                <h5>Employee</h5>
+                <p>Own profile only</p>
+                <p>AI bio helper</p>
+                <p>Request history</p>
+              </div>
+            </div>
+
+            <div className="col-md-4">
+              <div className={`role-box ${user.role === 'manager' ? 'role-box-active' : ''}`}>
+                <h5>Manager</h5>
+                <p>Employee request review</p>
+                <p>No self-approval</p>
+                <p>Dashboard analytics</p>
+              </div>
+            </div>
+
+            <div className="col-md-4">
+              <div className={`role-box ${user.role === 'admin' ? 'role-box-active' : ''}`}>
+                <h5>Admin</h5>
+                <p>Direct profile updates</p>
+                <p>Role management</p>
+                <p>Logs + database overview</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {(user.role === 'manager' || user.role === 'admin') && dashboard && (
           <section className="mb-4">
             <h2 className="section-title">Dashboard</h2>
             <div className="row g-3">
-              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Total Users</div><div className="kpi-value">{dashboard.total_users}</div></div></div>
-              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Employees</div><div className="kpi-value">{dashboard.total_employees}</div></div></div>
-              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Managers</div><div className="kpi-value">{dashboard.total_managers}</div></div></div>
-              <div className="col-md-3"><div className="kpi-card"><div className="kpi-label">Admins</div><div className="kpi-value">{dashboard.total_admins}</div></div></div>
-              <div className="col-md-4"><div className="kpi-card"><div className="kpi-label">Pending Requests</div><div className="kpi-value">{dashboard.pending_requests}</div></div></div>
-              <div className="col-md-4"><div className="kpi-card"><div className="kpi-label">Approved Requests</div><div className="kpi-value">{dashboard.approved_requests}</div></div></div>
-              <div className="col-md-4"><div className="kpi-card"><div className="kpi-label">Rejected Requests</div><div className="kpi-value">{dashboard.rejected_requests}</div></div></div>
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Total Users</div>
+                  <div className="kpi-value">{dashboard.total_users}</div>
+                </div>
+              </div>
+
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Employees</div>
+                  <div className="kpi-value">{dashboard.total_employees}</div>
+                </div>
+              </div>
+
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Managers</div>
+                  <div className="kpi-value">{dashboard.total_managers}</div>
+                </div>
+              </div>
+
+              <div className="col-md-3">
+                <div className="kpi-card">
+                  <div className="kpi-label">Admins</div>
+                  <div className="kpi-value">{dashboard.total_admins}</div>
+                </div>
+              </div>
+
+              <div className="col-md-4">
+                <div className="kpi-card">
+                  <div className="kpi-label">Pending Requests</div>
+                  <div className="kpi-value">{dashboard.pending_requests}</div>
+                </div>
+              </div>
+
+              <div className="col-md-4">
+                <div className="kpi-card">
+                  <div className="kpi-label">Approved Requests</div>
+                  <div className="kpi-value">{dashboard.approved_requests}</div>
+                </div>
+              </div>
+
+              <div className="col-md-4">
+                <div className="kpi-card">
+                  <div className="kpi-label">Rejected Requests</div>
+                  <div className="kpi-value">{dashboard.rejected_requests}</div>
+                </div>
+              </div>
             </div>
           </section>
         )}
@@ -499,18 +604,21 @@ function App() {
                   <div className="kpi-value">{databaseOverview.totals.users}</div>
                 </div>
               </div>
+
               <div className="col-md-3">
                 <div className="kpi-card">
                   <div className="kpi-label">Total Profiles</div>
                   <div className="kpi-value">{databaseOverview.totals.profiles}</div>
                 </div>
               </div>
+
               <div className="col-md-3">
                 <div className="kpi-card">
                   <div className="kpi-label">Change Requests</div>
                   <div className="kpi-value">{databaseOverview.totals.change_requests}</div>
                 </div>
               </div>
+
               <div className="col-md-3">
                 <div className="kpi-card">
                   <div className="kpi-label">Activity Logs</div>
@@ -518,86 +626,30 @@ function App() {
                 </div>
               </div>
             </div>
-
-            <div className="row g-3">
-              <div className="col-lg-6">
-                <div className="table-wrap">
-                  <div className="p-3 border-bottom">
-                    <h5 className="mb-0">Recent Change Requests</h5>
-                  </div>
-                  <div className="table-responsive">
-                    <table className="table table-hover mb-0">
-                      <thead>
-                        <tr>
-                          <th>ID</th>
-                          <th>User</th>
-                          <th>Field</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {databaseOverview.recent_change_requests.map((item) => (
-                          <tr key={item.id}>
-                            <td>{item.id}</td>
-                            <td>{item.full_name}</td>
-                            <td>{item.field_name}</td>
-                            <td>
-                              <span className={getStatusBadge(item.status)}>
-                                {item.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
-              <div className="col-lg-6">
-                <div className="table-wrap">
-                  <div className="p-3 border-bottom">
-                    <h5 className="mb-0">Recent Database Activity</h5>
-                  </div>
-                  <div className="table-responsive">
-                    <table className="table table-hover mb-0">
-                      <thead>
-                        <tr>
-                          <th>ID</th>
-                          <th>User</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {databaseOverview.recent_activity_logs.map((item) => (
-                          <tr key={item.id}>
-                            <td>{item.id}</td>
-                            <td>{item.full_name || 'System'}</td>
-                            <td>{item.action_type}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
           </section>
         )}
 
         <section className="section-card">
-          <h2 className="section-title">{user.role === 'employee' ? 'My Profile' : 'Account Profile'}</h2>
+          <h2 className="section-title">
+            {user.role === 'admin' ? 'Admin Profile (Direct Save)' : 'My Profile'}
+          </h2>
 
           <form onSubmit={handleSubmitChanges}>
             <div className="row">
               <div className="col-md-6 mb-3">
                 <label className="form-label">Phone</label>
                 <input type="text" className="form-control" name="phone" value={formData.phone} onChange={handleProfileChange} />
+                {user.role === 'employee' && guidedMode && (
+                  <div className="guided-tip">Use a phone number where HR can reach you if needed.</div>
+                )}
               </div>
 
               <div className="col-md-6 mb-3">
                 <label className="form-label">Department</label>
                 <input type="text" className="form-control" name="department" value={formData.department} onChange={handleProfileChange} />
+                {user.role === 'employee' && guidedMode && (
+                  <div className="guided-tip">This helps managers organize profiles by team or department.</div>
+                )}
               </div>
 
               <div className="col-md-6 mb-3">
@@ -613,6 +665,12 @@ function App() {
               <div className="col-12 mb-3">
                 <label className="form-label">Bio</label>
                 <textarea className="form-control" name="bio" value={formData.bio} onChange={handleProfileChange} />
+
+                {user.role === 'employee' && guidedMode && (
+                  <div className="guided-tip">
+                    Write a short summary about your background or role. You can use the AI helper to make it clearer.
+                  </div>
+                )}
               </div>
 
               {user.role === 'employee' && (
@@ -640,8 +698,20 @@ function App() {
             </div>
 
             <button type="submit" className="btn btn-primary px-4 py-2">
-              Submit Change Request
+              {user.role === 'admin' ? 'Save Changes Directly' : 'Submit Change Request'}
             </button>
+
+            {user.role === 'employee' && guidedMode && (
+              <div className="guided-tip mt-3">
+                Your update will not change the profile immediately. It will be sent as a request for a manager to review.
+              </div>
+            )}
+
+            {user.role === 'admin' && (
+              <div className="guided-tip mt-3">
+                Admin updates are saved directly because admins have full system authority.
+              </div>
+            )}
           </form>
         </section>
 
@@ -730,6 +800,7 @@ function App() {
                                       Promote to Manager
                                     </button>
                                   )}
+
                                   {u.role !== 'employee' && (
                                     <button
                                       className="btn btn-sm btn-outline-secondary"
@@ -772,13 +843,14 @@ function App() {
               <h2 className="section-title">
                 {user.role === 'manager' ? 'Employee Change Requests' : 'Change Requests'}
               </h2>
+
               <div className="table-wrap">
                 <div className="table-responsive">
                   <table className="table table-hover mb-0">
                     <thead>
                       <tr>
                         <th>ID</th>
-                        <th>Employee</th>
+                        <th>User</th>
                         <th>Role</th>
                         <th>Field</th>
                         <th>Old Value</th>
@@ -787,6 +859,7 @@ function App() {
                         <th>Actions</th>
                       </tr>
                     </thead>
+
                     <tbody>
                       {changes.map((change) => (
                         <tr key={change.id}>
@@ -814,6 +887,7 @@ function App() {
                                 >
                                   Approve
                                 </button>
+
                                 <button
                                   className="btn btn-danger btn-sm"
                                   onClick={() => reviewChange(change.id, 'reject')}
@@ -851,6 +925,7 @@ function App() {
                       <th>Created At</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {activityLogs.map((log) => (
                       <tr key={log.id}>

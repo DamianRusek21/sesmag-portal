@@ -11,7 +11,6 @@ router.get('/changes', async (req, res) => {
     let result;
 
     if (req.user.role === 'manager') {
-      // Managers only review employee requests, not manager/admin requests
       result = await pool.query(`
         SELECT change_requests.*, users.full_name, users.role AS requester_role
         FROM change_requests
@@ -20,7 +19,6 @@ router.get('/changes', async (req, res) => {
         ORDER BY change_requests.requested_at DESC
       `);
     } else {
-      // Admin can see all requests
       result = await pool.query(`
         SELECT change_requests.*, users.full_name, users.role AS requester_role
         FROM change_requests
@@ -93,16 +91,20 @@ router.put('/changes/:id/approve', async (req, res) => {
     const fieldName = fieldMap[change.field_name];
 
     await pool.query(
-      `UPDATE profiles
-       SET ${fieldName} = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = $2`,
+      `
+      UPDATE profiles
+      SET ${fieldName} = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = $2
+      `,
       [change.new_value, change.user_id]
     );
 
     await pool.query(
-      `UPDATE change_requests
-       SET status = 'approved', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
-       WHERE id = $2`,
+      `
+      UPDATE change_requests
+      SET status = 'approved', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      `,
       [req.user.id, req.params.id]
     );
 
@@ -132,7 +134,7 @@ router.put('/changes/:id/reject', async (req, res) => {
     );
 
     if (requestInfo.rows.length === 0) {
-      return res.status(404).json({ error: 'Pending change request not found' });
+      return res.status(404).json({ error: 'Change request not found' });
     }
 
     const change = requestInfo.rows[0];
@@ -149,11 +151,12 @@ router.put('/changes/:id/reject', async (req, res) => {
       return res.status(403).json({ error: 'Managers can only review employee requests' });
     }
 
-    const result = await pool.query(
-      `UPDATE change_requests
-       SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
-       WHERE id = $2 AND status = 'pending'
-       RETURNING *`,
+    await pool.query(
+      `
+      UPDATE change_requests
+      SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      `,
       [req.user.id, req.params.id]
     );
 
@@ -261,7 +264,8 @@ router.get('/database-overview', async (req, res) => {
     const totalActivityLogs = await pool.query(`SELECT COUNT(*)::int AS count FROM activity_logs`);
 
     const recentChangeRequests = await pool.query(`
-      SELECT change_requests.id, users.full_name, change_requests.field_name, change_requests.status, change_requests.requested_at
+      SELECT change_requests.id, users.full_name, users.role AS requester_role,
+             change_requests.field_name, change_requests.status, change_requests.requested_at
       FROM change_requests
       JOIN users ON change_requests.user_id = users.id
       ORDER BY change_requests.requested_at DESC
@@ -269,7 +273,8 @@ router.get('/database-overview', async (req, res) => {
     `);
 
     const recentActivityLogs = await pool.query(`
-      SELECT activity_logs.id, users.full_name, activity_logs.action_type, activity_logs.description, activity_logs.created_at
+      SELECT activity_logs.id, users.full_name, activity_logs.action_type,
+             activity_logs.description, activity_logs.created_at
       FROM activity_logs
       LEFT JOIN users ON activity_logs.user_id = users.id
       ORDER BY activity_logs.created_at DESC

@@ -45,7 +45,6 @@ router.get('/', authenticateToken, authorizeRoles('manager', 'admin'), async (re
   }
 });
 
-// Employee/admin/manager can view their own submitted requests
 router.get('/my-requests', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -66,8 +65,70 @@ router.get('/my-requests', authenticateToken, async (req, res) => {
   }
 });
 
+// Admin directly updates their own profile, no approval request needed
+router.put('/me/direct-update', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+  try {
+    const allowedFields = [
+      'phone',
+      'department',
+      'job_title',
+      'bio',
+      'location',
+      'public_info',
+      'private_info'
+    ];
+
+    const updates = [];
+    const values = [];
+    let index = 1;
+
+    for (const field of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        updates.push(`${field} = $${index}`);
+        values.push(req.body[field]);
+        index += 1;
+      }
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No valid fields provided' });
+    }
+
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(req.user.id);
+
+    const result = await pool.query(
+      `
+      UPDATE profiles
+      SET ${updates.join(', ')}
+      WHERE user_id = $${index}
+      RETURNING *
+      `,
+      values
+    );
+
+    await logActivity(
+      req.user.id,
+      'admin_direct_profile_update',
+      `${req.user.full_name} directly updated their admin profile`
+    );
+
+    res.json({
+      message: 'Profile updated directly',
+      profile: result.rows[0]
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update profile directly' });
+  }
+});
+
 router.post('/request-change', authenticateToken, async (req, res) => {
   try {
+    if (req.user.role === 'admin') {
+      return res.status(403).json({ error: 'Admins should use direct profile update' });
+    }
+
     const allowedFields = [
       'phone',
       'department',
