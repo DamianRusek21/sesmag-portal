@@ -6,9 +6,10 @@ const logActivity = require('../utils/logActivity');
 router.get('/health', authenticateToken, (req, res) => {
   res.json({
     message: 'AI route is connected',
-    hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
-    keyStartsWith: process.env.OPENAI_API_KEY
-      ? process.env.OPENAI_API_KEY.slice(0, 7)
+    provider: 'gemini',
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    keyStartsWith: process.env.GEMINI_API_KEY
+      ? process.env.GEMINI_API_KEY.slice(0, 6)
       : null
   });
 });
@@ -21,54 +22,54 @@ router.post('/improve-bio', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Bio is required' });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({
-        error: 'OPENAI_API_KEY is missing in Vercel backend environment variables'
+        error: 'GEMINI_API_KEY is missing in backend environment variables'
       });
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const url =
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
+        contents: [
           {
-            role: 'system',
-            content:
-              'Rewrite short employee profile bios to sound clear, professional, natural, and realistic. Do not exaggerate experience.'
-          },
-          {
-            role: 'user',
-            content: `Rewrite this bio:\n\n${bio}`
+            parts: [
+              {
+                text:
+                  `Rewrite this employee profile bio so it sounds clear, professional, natural, and realistic. ` +
+                  `Do not exaggerate experience. Keep it concise.\n\nBio:\n${bio}`
+              }
+            ]
           }
-        ],
-        temperature: 0.5
+        ]
       })
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      console.error('OpenAI API error:', data);
+      console.error('Gemini API error:', data);
       return res.status(500).json({
-        error: data?.error?.message || 'OpenAI API request failed'
+        error: data?.error?.message || 'Gemini API request failed'
       });
     }
 
-    const improved = data?.choices?.[0]?.message?.content?.trim();
+    const improved = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (!improved) {
-      return res.status(500).json({ error: 'No AI response returned' });
+      return res.status(500).json({ error: 'No Gemini response returned' });
     }
 
     await logActivity(
       req.user.id,
       'ai_improve_bio',
-      `${req.user.full_name} used the AI bio assistant`
+      `${req.user.full_name} used the Gemini AI bio assistant`
     );
 
     res.json({ improved });
